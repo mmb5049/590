@@ -119,10 +119,14 @@ const canvas = document.getElementById("clockCanvas");
 const ctx = canvas.getContext("2d");
 const radius = 250;
 const center = canvas.width / 2;
+const TOTAL_MINUTES = 24 * 60;
 
 let segments = JSON.parse(localStorage.getItem("lifeClockSegments")) || [];
+let timeline = JSON.parse(localStorage.getItem("lifeClockTimeline"));
 let isDragging = false;
 let startAngle = 0;
+let lastDragAngle = 0;
+let dragDelta = 0;
 
 const colors = {
     Health: "#4CAF50",
@@ -133,6 +137,7 @@ const colors = {
 
 function save() {
     localStorage.setItem("lifeClockSegments", JSON.stringify(segments));
+    localStorage.setItem("lifeClockTimeline", JSON.stringify(timeline));
 }
 
 function angleToTime(angle) {
@@ -143,6 +148,16 @@ function timeToAngle(time) {
     return (time / 24) * 2 * Math.PI;
 }
 
+function angleToMinute(angle) {
+    let normalized = angle % (2 * Math.PI);
+    if (normalized < 0) normalized += 2 * Math.PI;
+    return Math.floor((normalized / (2 * Math.PI)) * TOTAL_MINUTES) % TOTAL_MINUTES;
+}
+
+function minuteToAngle(minute) {
+    return (minute / TOTAL_MINUTES) * 2 * Math.PI;
+}
+
 function getMouseAngle(e) {
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left - center;
@@ -150,6 +165,89 @@ function getMouseAngle(e) {
     let angle = Math.atan2(y, x);
     if (angle < 0) angle += 2 * Math.PI;
     return angle;
+}
+
+function normalizeSpan(start, end) {
+    return end < start ? (end + 2 * Math.PI) - start : end - start;
+}
+
+function rebuildSegmentsFromTimeline() {
+    const rebuilt = [];
+    let i = 0;
+
+    while (i < TOTAL_MINUTES) {
+        const category = timeline[i];
+        if (!category) {
+            i++;
+            continue;
+        }
+
+        let j = i + 1;
+        while (j < TOTAL_MINUTES && timeline[j] === category) {
+            j++;
+        }
+
+        rebuilt.push({
+            start: minuteToAngle(i),
+            end: j === TOTAL_MINUTES ? 2 * Math.PI : minuteToAngle(j),
+            category
+        });
+
+        i = j;
+    }
+
+    if (
+        rebuilt.length > 1 &&
+        rebuilt[0].start === 0 &&
+        rebuilt[rebuilt.length - 1].end === 2 * Math.PI &&
+        rebuilt[0].category === rebuilt[rebuilt.length - 1].category
+    ) {
+        const first = rebuilt.shift();
+        rebuilt[rebuilt.length - 1].end = first.end;
+    }
+
+    segments = rebuilt;
+}
+
+function hydrateTimeline() {
+    if (Array.isArray(timeline) && timeline.length === TOTAL_MINUTES) {
+        rebuildSegmentsFromTimeline();
+        return;
+    }
+
+    timeline = new Array(TOTAL_MINUTES).fill(null);
+
+    segments.forEach(seg => {
+        const span = normalizeSpan(seg.start, seg.end);
+        const steps = Math.max(1, Math.round((span / (2 * Math.PI)) * TOTAL_MINUTES));
+
+        for (let step = 0; step <= steps; step++) {
+            const angle = seg.start + (span * step) / steps;
+            timeline[angleToMinute(angle)] = seg.category;
+        }
+    });
+
+    rebuildSegmentsFromTimeline();
+    save();
+}
+
+function applyDragSelection(category, start, delta) {
+    const maxDelta = 2 * Math.PI;
+    const clampedDelta = Math.max(-maxDelta, Math.min(maxDelta, delta));
+    const span = Math.abs(clampedDelta);
+    if (span < 0.0001) return;
+
+    const direction = clampedDelta >= 0 ? 1 : -1;
+    const coveredMinutes = Math.max(1, Math.round((span / (2 * Math.PI)) * TOTAL_MINUTES));
+    const startMinute = angleToMinute(start);
+
+    for (let step = 0; step <= coveredMinutes; step++) {
+        const minute = (startMinute + direction * step + TOTAL_MINUTES) % TOTAL_MINUTES;
+        timeline[minute] = category;
+    }
+
+    rebuildSegmentsFromTimeline();
+    save();
 }
 
 function drawClock() {
@@ -162,8 +260,9 @@ function drawClock() {
     ctx.stroke();
 
     segments.forEach(seg => {
+        const endAngle = seg.end < seg.start ? seg.end + 2 * Math.PI : seg.end;
         ctx.beginPath();
-        ctx.arc(center, center, radius, seg.start, seg.end);
+        ctx.arc(center, center, radius, seg.start, endAngle);
         ctx.strokeStyle = colors[seg.category];
         ctx.lineWidth = 20;
         ctx.stroke();
@@ -188,9 +287,12 @@ function drawNeedle() {
     ctx.stroke();
 
     segments.forEach(seg => {
-        if (angle >= seg.start && angle <= seg.end) {
+        const endAngle = seg.end < seg.start ? seg.end + 2 * Math.PI : seg.end;
+        const adjustedNeedleAngle = angle < seg.start ? angle + 2 * Math.PI : angle;
+
+        if (adjustedNeedleAngle >= seg.start && adjustedNeedleAngle <= endAngle) {
             ctx.beginPath();
-            ctx.arc(center, center, radius, seg.start, seg.end);
+            ctx.arc(center, center, radius, seg.start, endAngle);
             ctx.strokeStyle = colors[seg.category];
             ctx.lineWidth = 25;
             ctx.shadowColor = colors[seg.category];
@@ -204,9 +306,8 @@ function drawNeedle() {
 function updateStats() {
     const totals = { Health:0, Wealth:0, Rest:0, Waste:0 };
 
-    segments.forEach(seg => {
-        const duration = angleToTime(seg.end - seg.start);
-        totals[seg.category] += duration;
+    timeline.forEach(category => {
+        if (category) totals[category] += 1 / 60;
     });
 
     const statsDiv = document.getElementById("stats");
@@ -230,26 +331,41 @@ function updateStats() {
 canvas.addEventListener("mousedown", e => {
     isDragging = true;
     startAngle = getMouseAngle(e);
+    lastDragAngle = startAngle;
+    dragDelta = 0;
+});
+
+canvas.addEventListener("mousemove", e => {
+    if (!isDragging) return;
+
+    const currentAngle = getMouseAngle(e);
+    let delta = currentAngle - lastDragAngle;
+
+    if (delta > Math.PI) delta -= 2 * Math.PI;
+    if (delta < -Math.PI) delta += 2 * Math.PI;
+
+    dragDelta += delta;
+    lastDragAngle = currentAngle;
 });
 
 canvas.addEventListener("mouseup", e => {
     if (!isDragging) return;
-    const endAngle = getMouseAngle(e);
+
+    const currentAngle = getMouseAngle(e);
+    let delta = currentAngle - lastDragAngle;
+    if (delta > Math.PI) delta -= 2 * Math.PI;
+    if (delta < -Math.PI) delta += 2 * Math.PI;
+    dragDelta += delta;
+
     const category = document.getElementById("categorySelect").value;
-
-    segments.push({
-        start: startAngle,
-        end: endAngle,
-        category
-    });
-
-    save();
+    applyDragSelection(category, startAngle, dragDelta);
     updateStats();
     drawClock();
     isDragging = false;
 });
 
 document.getElementById("clearBtn").onclick = () => {
+    timeline = new Array(TOTAL_MINUTES).fill(null);
     segments = [];
     save();
     updateStats();
@@ -260,12 +376,14 @@ document.getElementById("zenBtn").onclick = () => {
     document.getElementById("app").classList.toggle("zen");
 };
 
+hydrateTimeline();
+updateStats();
+
 function loop() {
     drawClock();
     requestAnimationFrame(loop);
 }
 
-updateStats();
 loop();
 </script>
 </body>
