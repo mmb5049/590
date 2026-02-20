@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Life-Clock Dashboard</title>
+<style>
+    body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        background: #0f1115;
+        color: white;
+        display: flex;
+        height: 100vh;
+        overflow: hidden;
+    }
+
+    .container {
+        display: flex;
+        width: 100%;
+    }
+
+    .clock-section {
+        flex: 2;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        position: relative;
+    }
+
+    canvas {
+        cursor: crosshair;
+    }
+
+    .sidebar {
+        flex: 1;
+        background: #151822;
+        padding: 20px;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .category {
+        margin-bottom: 15px;
+    }
+
+    .bar-container {
+        background: #222;
+        border-radius: 8px;
+        height: 20px;
+        overflow: hidden;
+    }
+
+    .bar {
+        height: 100%;
+        transition: width 0.3s ease;
+    }
+
+    .controls {
+        margin-top: auto;
+    }
+
+    select, button {
+        width: 100%;
+        margin-bottom: 10px;
+        padding: 8px;
+        border-radius: 6px;
+        border: none;
+        font-size: 14px;
+    }
+
+    button {
+        background: #444;
+        color: white;
+        cursor: pointer;
+    }
+
+    button:hover {
+        background: #666;
+    }
+
+    .zen .sidebar {
+        display: none;
+    }
+
+    .zen body {
+        background: black;
+    }
+</style>
+</head>
+<body>
+
+<div class="container" id="app">
+    <div class="clock-section">
+        <canvas id="clockCanvas" width="600" height="600"></canvas>
+    </div>
+
+    <div class="sidebar">
+        <h2>Day Flow</h2>
+
+        <div id="stats"></div>
+
+        <div class="controls">
+            <select id="categorySelect">
+                <option value="Health">Health</option>
+                <option value="Wealth">Wealth</option>
+                <option value="Rest">Rest</option>
+                <option value="Waste">Waste</option>
+            </select>
+            <button id="clearBtn">Clear All</button>
+            <button id="zenBtn">Zen Mode</button>
+        </div>
+    </div>
+</div>
+
+<script>
+const canvas = document.getElementById("clockCanvas");
+const ctx = canvas.getContext("2d");
+const radius = 250;
+const center = canvas.width / 2;
+
+let segments = JSON.parse(localStorage.getItem("lifeClockSegments")) || [];
+let isDragging = false;
+let startAngle = 0;
+
+const colors = {
+    Health: "#4CAF50",
+    Wealth: "#2196F3",
+    Rest: "#9C27B0",
+    Waste: "#F44336"
+};
+
+function save() {
+    localStorage.setItem("lifeClockSegments", JSON.stringify(segments));
+}
+
+function angleToTime(angle) {
+    return (angle / (2 * Math.PI)) * 24;
+}
+
+function timeToAngle(time) {
+    return (time / 24) * 2 * Math.PI;
+}
+
+function getMouseAngle(e) {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left - center;
+    const y = e.clientY - rect.top - center;
+    let angle = Math.atan2(y, x);
+    if (angle < 0) angle += 2 * Math.PI;
+    return angle;
+}
+
+function drawClock() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.beginPath();
+    ctx.arc(center, center, radius, 0, 2 * Math.PI);
+    ctx.strokeStyle = "#333";
+    ctx.lineWidth = 20;
+    ctx.stroke();
+
+    segments.forEach(seg => {
+        ctx.beginPath();
+        ctx.arc(center, center, radius, seg.start, seg.end);
+        ctx.strokeStyle = colors[seg.category];
+        ctx.lineWidth = 20;
+        ctx.stroke();
+    });
+
+    drawNeedle();
+}
+
+function drawNeedle() {
+    const now = new Date();
+    const hours = now.getHours() + now.getMinutes()/60;
+    const angle = timeToAngle(hours);
+
+    ctx.beginPath();
+    ctx.moveTo(center, center);
+    ctx.lineTo(
+        center + radius * Math.cos(angle),
+        center + radius * Math.sin(angle)
+    );
+    ctx.strokeStyle = "white";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    segments.forEach(seg => {
+        if (angle >= seg.start && angle <= seg.end) {
+            ctx.beginPath();
+            ctx.arc(center, center, radius, seg.start, seg.end);
+            ctx.strokeStyle = colors[seg.category];
+            ctx.lineWidth = 25;
+            ctx.shadowColor = colors[seg.category];
+            ctx.shadowBlur = 20;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+        }
+    });
+}
+
+function updateStats() {
+    const totals = { Health:0, Wealth:0, Rest:0, Waste:0 };
+
+    segments.forEach(seg => {
+        const duration = angleToTime(seg.end - seg.start);
+        totals[seg.category] += duration;
+    });
+
+    const statsDiv = document.getElementById("stats");
+    statsDiv.innerHTML = "";
+
+    Object.keys(totals).forEach(cat => {
+        const percent = (totals[cat]/24)*100;
+
+        const div = document.createElement("div");
+        div.className = "category";
+        div.innerHTML = `
+            <div>${cat} (${totals[cat].toFixed(1)}h)</div>
+            <div class="bar-container">
+                <div class="bar" style="width:${percent}%; background:${colors[cat]}"></div>
+            </div>
+        `;
+        statsDiv.appendChild(div);
+    });
+}
+
+canvas.addEventListener("mousedown", e => {
+    isDragging = true;
+    startAngle = getMouseAngle(e);
+});
+
+canvas.addEventListener("mouseup", e => {
+    if (!isDragging) return;
+    const endAngle = getMouseAngle(e);
+    const category = document.getElementById("categorySelect").value;
+
+    segments.push({
+        start: startAngle,
+        end: endAngle,
+        category
+    });
+
+    save();
+    updateStats();
+    drawClock();
+    isDragging = false;
+});
+
+document.getElementById("clearBtn").onclick = () => {
+    segments = [];
+    save();
+    updateStats();
+    drawClock();
+};
+
+document.getElementById("zenBtn").onclick = () => {
+    document.getElementById("app").classList.toggle("zen");
+};
+
+function loop() {
+    drawClock();
+    requestAnimationFrame(loop);
+}
+
+updateStats();
+loop();
+</script>
+</body>
+</html>
