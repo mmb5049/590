@@ -172,6 +172,9 @@ function normalizeSpan(start, end) {
     return end < start ? (end + 2 * Math.PI) - start : end - start;
 }
 
+function getTotalTrackedHours() {
+    return segments.reduce((total, seg) => total + angleToTime(normalizeSpan(seg.start, seg.end)), 0);
+}
 function rebuildSegmentsFromTimeline() {
     const rebuilt = [];
     let i = 0;
@@ -251,6 +254,34 @@ function applyDragSelection(category, start, delta) {
     save();
 }
 
+function capSegmentsToDailyLimit() {
+    const cappedSegments = [];
+    let remainingHours = 24;
+
+    segments.forEach(seg => {
+        if (remainingHours <= 0) return;
+
+        const segmentHours = angleToTime(normalizeSpan(seg.start, seg.end));
+        const allowedHours = Math.min(segmentHours, remainingHours);
+        const cappedEnd = (seg.start + timeToAngle(allowedHours)) % (2 * Math.PI);
+
+        cappedSegments.push({
+            ...seg,
+            end: cappedEnd
+        });
+
+        remainingHours -= allowedHours;
+    });
+
+    segments = cappedSegments;
+}
+
+const initialSegmentsSnapshot = JSON.stringify(segments);
+capSegmentsToDailyLimit();
+if (JSON.stringify(segments) !== initialSegmentsSnapshot) {
+    save();
+}
+
 function drawClock() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -308,8 +339,12 @@ function drawNeedle() {
 function updateStats() {
     const totals = { Health:0, Wealth:0, Rest:0, Waste:0 };
 
-    timeline.forEach(category => {
-        if (category) totals[category] += 1 / 60;
+    segments.forEach(seg => {
+        const normalizedSpan = seg.end < seg.start
+            ? (seg.end + 2 * Math.PI) - seg.start
+            : seg.end - seg.start;
+        const duration = angleToTime(normalizedSpan);
+        totals[seg.category] += duration;
     });
 
     const statsDiv = document.getElementById("stats");
