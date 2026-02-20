@@ -162,8 +162,9 @@ function drawClock() {
     ctx.stroke();
 
     segments.forEach(seg => {
+        const endAngle = seg.end < seg.start ? seg.end + 2 * Math.PI : seg.end;
         ctx.beginPath();
-        ctx.arc(center, center, radius, seg.start, seg.end);
+        ctx.arc(center, center, radius, seg.start, endAngle);
         ctx.strokeStyle = colors[seg.category];
         ctx.lineWidth = 20;
         ctx.stroke();
@@ -188,9 +189,12 @@ function drawNeedle() {
     ctx.stroke();
 
     segments.forEach(seg => {
-        if (angle >= seg.start && angle <= seg.end) {
+        const endAngle = seg.end < seg.start ? seg.end + 2 * Math.PI : seg.end;
+        const adjustedNeedleAngle = angle < seg.start ? angle + 2 * Math.PI : angle;
+
+        if (adjustedNeedleAngle >= seg.start && adjustedNeedleAngle <= endAngle) {
             ctx.beginPath();
-            ctx.arc(center, center, radius, seg.start, seg.end);
+            ctx.arc(center, center, radius, seg.start, endAngle);
             ctx.strokeStyle = colors[seg.category];
             ctx.lineWidth = 25;
             ctx.shadowColor = colors[seg.category];
@@ -205,7 +209,10 @@ function updateStats() {
     const totals = { Health:0, Wealth:0, Rest:0, Waste:0 };
 
     segments.forEach(seg => {
-        const duration = angleToTime(seg.end - seg.start);
+        const normalizedSpan = seg.end < seg.start
+            ? (seg.end + 2 * Math.PI) - seg.start
+            : seg.end - seg.start;
+        const duration = angleToTime(normalizedSpan);
         totals[seg.category] += duration;
     });
 
