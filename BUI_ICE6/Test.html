@@ -127,6 +127,7 @@ let isDragging = false;
 let startAngle = 0;
 let lastDragAngle = 0;
 let dragDelta = 0;
+let dragNeedleAngle = null;
 
 const colors = {
     Health: "#4CAF50",
@@ -305,7 +306,8 @@ function drawClock() {
 function drawNeedle() {
     const now = new Date();
     const hours = now.getHours() + now.getMinutes()/60;
-    const angle = timeToAngle(hours);
+    const liveAngle = timeToAngle(hours);
+    const angle = dragNeedleAngle ?? liveAngle;
 
     ctx.beginPath();
     ctx.moveTo(center, center);
@@ -367,6 +369,7 @@ canvas.addEventListener("mousedown", e => {
     isDragging = true;
     startAngle = getMouseAngle(e);
     lastDragAngle = startAngle;
+    dragNeedleAngle = startAngle;
     dragDelta = 0;
 });
 
@@ -381,6 +384,7 @@ canvas.addEventListener("mousemove", e => {
 
     dragDelta += delta;
     lastDragAngle = currentAngle;
+    dragNeedleAngle = currentAngle;
 });
 
 canvas.addEventListener("mouseup", e => {
@@ -394,9 +398,16 @@ canvas.addEventListener("mouseup", e => {
 
     const category = document.getElementById("categorySelect").value;
     applyDragSelection(category, startAngle, dragDelta);
+    dragNeedleAngle = null;
     updateStats();
     drawClock();
     isDragging = false;
+});
+
+canvas.addEventListener("mouseleave", () => {
+    if (!isDragging) return;
+    isDragging = false;
+    dragNeedleAngle = null;
 });
 
 document.getElementById("clearBtn").onclick = () => {
@@ -411,7 +422,7 @@ document.getElementById("zenBtn").onclick = () => {
     document.getElementById("app").classList.toggle("zen");
 };
 
-//hydrateTimeline();
+hydrateTimeline();
 updateStats();
 
 function loop() {
