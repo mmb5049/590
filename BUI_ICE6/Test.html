@@ -119,10 +119,14 @@ const canvas = document.getElementById("clockCanvas");
 const ctx = canvas.getContext("2d");
 const radius = 250;
 const center = canvas.width / 2;
+const TOTAL_MINUTES = 24 * 60;
 
 let segments = JSON.parse(localStorage.getItem("lifeClockSegments")) || [];
+let timeline = JSON.parse(localStorage.getItem("lifeClockTimeline"));
 let isDragging = false;
 let startAngle = 0;
+let lastDragAngle = 0;
+let dragDelta = 0;
 
 const colors = {
     Health: "#4CAF50",
@@ -133,6 +137,7 @@ const colors = {
 
 function save() {
     localStorage.setItem("lifeClockSegments", JSON.stringify(segments));
+    localStorage.setItem("lifeClockTimeline", JSON.stringify(timeline));
 }
 
 function angleToTime(angle) {
@@ -141,6 +146,16 @@ function angleToTime(angle) {
 
 function timeToAngle(time) {
     return (time / 24) * 2 * Math.PI;
+}
+
+function angleToMinute(angle) {
+    let normalized = angle % (2 * Math.PI);
+    if (normalized < 0) normalized += 2 * Math.PI;
+    return Math.floor((normalized / (2 * Math.PI)) * TOTAL_MINUTES) % TOTAL_MINUTES;
+}
+
+function minuteToAngle(minute) {
+    return (minute / TOTAL_MINUTES) * 2 * Math.PI;
 }
 
 function getMouseAngle(e) {
@@ -273,12 +288,25 @@ function updateStats() {
 canvas.addEventListener("mousedown", e => {
     isDragging = true;
     startAngle = getMouseAngle(e);
+    lastDragAngle = startAngle;
+    dragDelta = 0;
+});
+
+canvas.addEventListener("mousemove", e => {
+    if (!isDragging) return;
+
+    const currentAngle = getMouseAngle(e);
+    let delta = currentAngle - lastDragAngle;
+
+    if (delta > Math.PI) delta -= 2 * Math.PI;
+    if (delta < -Math.PI) delta += 2 * Math.PI;
+
+    dragDelta += delta;
+    lastDragAngle = currentAngle;
 });
 
 canvas.addEventListener("mouseup", e => {
     if (!isDragging) return;
-    const endAngle = getMouseAngle(e);
-    const category = document.getElementById("categorySelect").value;
 
     const selectedSpan = normalizeSpan(startAngle, endAngle);
     const selectedHours = angleToTime(selectedSpan);
@@ -303,6 +331,7 @@ canvas.addEventListener("mouseup", e => {
 });
 
 document.getElementById("clearBtn").onclick = () => {
+    timeline = new Array(TOTAL_MINUTES).fill(null);
     segments = [];
     save();
     updateStats();
@@ -313,12 +342,14 @@ document.getElementById("zenBtn").onclick = () => {
     document.getElementById("app").classList.toggle("zen");
 };
 
+hydrateTimeline();
+updateStats();
+
 function loop() {
     drawClock();
     requestAnimationFrame(loop);
 }
 
-updateStats();
 loop();
 </script>
 </body>
