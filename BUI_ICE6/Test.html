@@ -171,82 +171,35 @@ function normalizeSpan(start, end) {
     return end < start ? (end + 2 * Math.PI) - start : end - start;
 }
 
-function rebuildSegmentsFromTimeline() {
-    const rebuilt = [];
-    let i = 0;
-
-    while (i < TOTAL_MINUTES) {
-        const category = timeline[i];
-        if (!category) {
-            i++;
-            continue;
-        }
-
-        let j = i + 1;
-        while (j < TOTAL_MINUTES && timeline[j] === category) {
-            j++;
-        }
-
-        rebuilt.push({
-            start: minuteToAngle(i),
-            end: j === TOTAL_MINUTES ? 2 * Math.PI : minuteToAngle(j),
-            category
-        });
-
-        i = j;
-    }
-
-    if (
-        rebuilt.length > 1 &&
-        rebuilt[0].start === 0 &&
-        rebuilt[rebuilt.length - 1].end === 2 * Math.PI &&
-        rebuilt[0].category === rebuilt[rebuilt.length - 1].category
-    ) {
-        const first = rebuilt.shift();
-        rebuilt[rebuilt.length - 1].end = first.end;
-    }
-
-    segments = rebuilt;
+function getTotalTrackedHours() {
+    return segments.reduce((total, seg) => total + angleToTime(normalizeSpan(seg.start, seg.end)), 0);
 }
 
-function hydrateTimeline() {
-    if (Array.isArray(timeline) && timeline.length === TOTAL_MINUTES) {
-        rebuildSegmentsFromTimeline();
-        return;
-    }
-
-    timeline = new Array(TOTAL_MINUTES).fill(null);
+function capSegmentsToDailyLimit() {
+    const cappedSegments = [];
+    let remainingHours = 24;
 
     segments.forEach(seg => {
-        const span = normalizeSpan(seg.start, seg.end);
-        const steps = Math.max(1, Math.round((span / (2 * Math.PI)) * TOTAL_MINUTES));
+        if (remainingHours <= 0) return;
 
-        for (let step = 0; step <= steps; step++) {
-            const angle = seg.start + (span * step) / steps;
-            timeline[angleToMinute(angle)] = seg.category;
-        }
+        const segmentHours = angleToTime(normalizeSpan(seg.start, seg.end));
+        const allowedHours = Math.min(segmentHours, remainingHours);
+        const cappedEnd = (seg.start + timeToAngle(allowedHours)) % (2 * Math.PI);
+
+        cappedSegments.push({
+            ...seg,
+            end: cappedEnd
+        });
+
+        remainingHours -= allowedHours;
     });
 
-    rebuildSegmentsFromTimeline();
-    save();
+    segments = cappedSegments;
 }
 
-function applyDragSelection(category, start, delta) {
-    const maxDelta = 2 * Math.PI;
-    const clampedDelta = Math.max(-maxDelta, Math.min(maxDelta, delta));
-    const span = Math.abs(clampedDelta);
-    if (span < 0.0001) return;
-
-    const direction = clampedDelta >= 0 ? 1 : -1;
-    const coveredMinutes = Math.max(1, Math.round((span / (2 * Math.PI)) * TOTAL_MINUTES));
-    const startMinute = angleToMinute(start);
-
-    for (let step = 0; step <= coveredMinutes; step++) {
-        const minute = (startMinute + direction * step + TOTAL_MINUTES) % TOTAL_MINUTES;
-        timeline[minute] = category;
-    }
-
-    rebuildSegmentsFromTimeline();
+const initialSegmentsSnapshot = JSON.stringify(segments);
+capSegmentsToDailyLimit();
+if (JSON.stringify(segments) !== initialSegmentsSnapshot) {
     save();
 }
 
@@ -306,8 +259,12 @@ function drawNeedle() {
 function updateStats() {
     const totals = { Health:0, Wealth:0, Rest:0, Waste:0 };
 
-    timeline.forEach(category => {
-        if (category) totals[category] += 1 / 60;
+    segments.forEach(seg => {
+        const normalizedSpan = seg.end < seg.start
+            ? (seg.end + 2 * Math.PI) - seg.start
+            : seg.end - seg.start;
+        const duration = angleToTime(normalizedSpan);
+        totals[seg.category] += duration;
     });
 
     const statsDiv = document.getElementById("stats");
@@ -351,16 +308,25 @@ canvas.addEventListener("mousemove", e => {
 canvas.addEventListener("mouseup", e => {
     if (!isDragging) return;
 
-    const currentAngle = getMouseAngle(e);
-    let delta = currentAngle - lastDragAngle;
-    if (delta > Math.PI) delta -= 2 * Math.PI;
-    if (delta < -Math.PI) delta += 2 * Math.PI;
-    dragDelta += delta;
+    const selectedSpan = normalizeSpan(startAngle, endAngle);
+    const selectedHours = angleToTime(selectedSpan);
+    const remainingHours = Math.max(0, 24 - getTotalTrackedHours());
+    const cappedHours = Math.min(selectedHours, remainingHours);
 
-    const category = document.getElementById("categorySelect").value;
-    applyDragSelection(category, startAngle, dragDelta);
-    updateStats();
-    drawClock();
+    if (cappedHours > 0) {
+        const cappedEndAngle = (startAngle + timeToAngle(cappedHours)) % (2 * Math.PI);
+
+        segments.push({
+            start: startAngle,
+            end: cappedEndAngle,
+            category
+        });
+
+        save();
+        updateStats();
+        drawClock();
+    }
+
     isDragging = false;
 });
 
