@@ -152,6 +152,42 @@ function getMouseAngle(e) {
     return angle;
 }
 
+function normalizeSpan(start, end) {
+    return end < start ? (end + 2 * Math.PI) - start : end - start;
+}
+
+function getTotalTrackedHours() {
+    return segments.reduce((total, seg) => total + angleToTime(normalizeSpan(seg.start, seg.end)), 0);
+}
+
+function capSegmentsToDailyLimit() {
+    const cappedSegments = [];
+    let remainingHours = 24;
+
+    segments.forEach(seg => {
+        if (remainingHours <= 0) return;
+
+        const segmentHours = angleToTime(normalizeSpan(seg.start, seg.end));
+        const allowedHours = Math.min(segmentHours, remainingHours);
+        const cappedEnd = (seg.start + timeToAngle(allowedHours)) % (2 * Math.PI);
+
+        cappedSegments.push({
+            ...seg,
+            end: cappedEnd
+        });
+
+        remainingHours -= allowedHours;
+    });
+
+    segments = cappedSegments;
+}
+
+const initialSegmentsSnapshot = JSON.stringify(segments);
+capSegmentsToDailyLimit();
+if (JSON.stringify(segments) !== initialSegmentsSnapshot) {
+    save();
+}
+
 function drawClock() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -244,15 +280,25 @@ canvas.addEventListener("mouseup", e => {
     const endAngle = getMouseAngle(e);
     const category = document.getElementById("categorySelect").value;
 
-    segments.push({
-        start: startAngle,
-        end: endAngle,
-        category
-    });
+    const selectedSpan = normalizeSpan(startAngle, endAngle);
+    const selectedHours = angleToTime(selectedSpan);
+    const remainingHours = Math.max(0, 24 - getTotalTrackedHours());
+    const cappedHours = Math.min(selectedHours, remainingHours);
 
-    save();
-    updateStats();
-    drawClock();
+    if (cappedHours > 0) {
+        const cappedEndAngle = (startAngle + timeToAngle(cappedHours)) % (2 * Math.PI);
+
+        segments.push({
+            start: startAngle,
+            end: cappedEndAngle,
+            category
+        });
+
+        save();
+        updateStats();
+        drawClock();
+    }
+
     isDragging = false;
 });
 
