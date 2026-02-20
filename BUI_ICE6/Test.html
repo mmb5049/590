@@ -245,7 +245,10 @@ function updateStats() {
     const totals = { Health:0, Wealth:0, Rest:0, Waste:0 };
 
     segments.forEach(seg => {
-        const duration = angleToTime(normalizeSpan(seg.start, seg.end));
+        const normalizedSpan = seg.end < seg.start
+            ? (seg.end + 2 * Math.PI) - seg.start
+            : seg.end - seg.start;
+        const duration = angleToTime(normalizedSpan);
         totals[seg.category] += duration;
     });
 
